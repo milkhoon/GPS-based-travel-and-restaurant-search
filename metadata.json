@@ -1,0 +1,7 @@
+{
+  "name": "GeoTasty - Local Discovery",
+  "description": "Discover nearby restaurants and travel spots based on your real-time GPS location, powered by Gemini AI with blog review insights.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
