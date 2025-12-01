@@ -14,6 +14,7 @@ export interface Place {
   imageUrl?: string;
   latitude: number;
   longitude: number;
+  photoRef?: string;
 }
 
 export interface ReviewSummary {

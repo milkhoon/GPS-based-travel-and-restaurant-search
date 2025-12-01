@@ -3,19 +3,26 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
-    const env = loadEnv(mode, '.', '');
-    return {
-      server: {
-        port: 3000,
-        host: '0.0.0.0',
+  const env = loadEnv(mode, process.cwd(), '');
+
+  return {
+    server: {
+      port: 3000,
+      host: '0.0.0.0',
+      proxy: {
+        '/google': {
+          target: 'https://maps.googleapis.com',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/google/, ''),
+        },
       },
-      plugins: [react()],
-      // Do not inject process.env.* into client; use import.meta.env.VITE_* instead
-      define: {},
-      resolve: {
-        alias: {
-          '@': path.resolve(__dirname, '.'),
-        }
-      }
-    };
+    },
+    plugins: [react()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './'),
+      },
+    },
+  };
 });

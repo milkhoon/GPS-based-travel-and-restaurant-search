@@ -5,6 +5,7 @@ import PlaceCard from './components/PlaceCard';
 import ReviewModal from './components/ReviewModal';
 import { fetchNearbyPlaces } from './services/geminiService';
 import { Place } from './types';
+import { getPlacePhotoUrl } from './services/googlePlace';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>(Tab.FOOD);
@@ -36,12 +37,22 @@ export default function App() {
         { latitude: center[0], longitude: center[1] },
         activeTab
       );
-      setPlaces(data);
+
+      console.log("📍 Sample place:", data[0]);
+
+      const update = data.map((p) => ({
+        ...p,
+        imageUrl: p.photoRef ? getPlacePhotoUrl(p.photoRef) : null
+      }))
+      setPlaces(update);
+
     } catch (err) {
+      console.log("🔑 Loaded API KEY:", import.meta.env.VITE_GENAI_API_KEY);
       console.error('❌ fetchNearbyPlaces ERROR:', err);
       setPlaces([]);
     }
     setLoading(false);
+    
   };
 
   useEffect(() => {

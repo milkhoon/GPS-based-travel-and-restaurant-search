@@ -1,4 +1,5 @@
 import { Coordinates, Place, ReviewSummary } from "../types";
+import { getPlacePhotoUrl } from "./googlePlace";
 
 // Helper to extract the first valid JSON array from a string, ignoring conversational text
 const cleanJsonString = (str: string): string => {
@@ -62,105 +63,131 @@ export const fetchNearbyPlaces = async (
   coords: Coordinates,
   category: 'food' | 'travel'
 ): Promise<Place[]> => {
-  // Use Overpass API (OpenStreetMap) to fetch nearby POIs
-  // Radius in meters
-  const radius = category === 'food' ? 3000 : 5000;
-  const amenities = category === 'food' ? ['restaurant', 'cafe'] : [];
-  const tourism = category === 'travel' ? ['attraction', 'museum', 'viewpoint', 'theme_park', 'zoo'] : [];
-
-  // Construct Overpass QL query
-  const parts: string[] = [];
-  amenities.forEach(a => {
-    parts.push(`node["amenity"="${a}"](around:${radius},${coords.latitude},${coords.longitude});`);
-    parts.push(`way["amenity"="${a}"](around:${radius},${coords.latitude},${coords.longitude});`);
-  });
-  tourism.forEach(t => {
-    parts.push(`node["tourism"="${t}"](around:${radius},${coords.latitude},${coords.longitude});`);
-    parts.push(`way["tourism"="${t}"](around:${radius},${coords.latitude},${coords.longitude});`);
-  });
-
-  const query = `[
-    out:json
-  ];
-  (
-    ${parts.join('\n    ')}
-  );
-  out center 20;`;
-
-  const url = 'https://overpass-api.de/api/interpreter';
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-    body: new URLSearchParams({ data: query }).toString()
-  });
-
-  if (!res.ok) {
-    console.warn('Overpass request failed', res.status, res.statusText);
+ // ⭐ Google API 기반으로 검색하도록 변경
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    console.error("❌ Google Maps API Key not found in .env");
     return [];
   }
 
-  const data = await res.json();
-  const elements = Array.isArray(data.elements) ? data.elements : [];
+  const radius = category === "food" ? 1500 : 3000; // ⭐ Food와 Travel 반경 구분
+  const type = category === "food" ? "restaurant" : "tourist_attraction";
 
+  const url =
+  `/google/maps/api/place/nearbysearch/json` +
+  `?location=${coords.latitude},${coords.longitude}` +
+  `&radius=${radius}&type=${type}&language=ko&key=${apiKey}`;
+
+
+  console.log("📡 Google Places URL:", url);
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    console.error("❌ Google Places Request Failed:", res.status);
+    return [];
+  }
+
+  const json = await res.json();
+  console.log("📍 Google API status:", json.status);
+
+  if (json.status !== "OK" && json.status !== "ZERO_RESULTS") {
+    console.error("❌ Google API Error:", json.error_message);
+    return [];
+  }
+
+  const elements = json.results || [];
+
+  // ⭐ JSON → Place 데이터 변환
   const places: Place[] = elements.map((el: any, idx: number) => {
-    const lat = el.lat ?? el.center?.lat;
-    const lon = el.lon ?? el.center?.lon;
-    const name = el.tags?.name ?? el.tags?.['name:ko'] ?? el.tags?.['name:en'] ?? (category === 'food' ? 'Unknown Restaurant' : 'Unknown Spot');
-    const categoryMapped = amenities.length ? (el.tags?.amenity ?? 'restaurant') : (el.tags?.tourism ?? 'attraction');
-    const address = [el.tags?.addr_city, el.tags?.addr_district, el.tags?.addr_street, el.tags?.addr_housenumber].filter(Boolean).join(' ');
+    const photoRef: string | undefined =
+      el.photos?.[0]?.photo_reference;
 
     return {
-      id: `osm-${el.id}-${idx}`,
-      name,
-      description: el.tags?.description ?? (category === 'food' ? 'Local eatery or cafe.' : 'Tourist attraction nearby.'),
-      rating: undefined,
-      address,
-      category: categoryMapped,
-      tags: Object.keys(el.tags ?? {}),
-      imageUrl: undefined,
-      latitude: typeof lat === 'number' ? lat : parseFloat(lat),
-      longitude: typeof lon === 'number' ? lon : parseFloat(lon),
-    } as Place;
-  }).filter(p => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+      id: el.place_id,
+      name: el.name ?? "Unknown",
+      description: el.types?.[0] ?? "Unknown Place",
+      rating: el.rating,
+      address: el.vicinity ?? "",
+      category: category === "food" ? "restaurant" : "attraction",
+      tags: el.types || [],
+      latitude: el.geometry.location.lat,
+      longitude: el.geometry.location.lng,
 
-  // Deduplicate by name + coords
-  const seen = new Set<string>();
-  const unique = places.filter(p => {
-    const key = `${p.name}-${p.latitude.toFixed(5)}-${p.longitude.toFixed(5)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+      // ⭐ Photo URL 자동 생성
+      photoRef,
+      imageUrl: photoRef ? getPlacePhotoUrl(photoRef, 400) : undefined
+    } as Place;
   });
 
-  // Limit to 12 results
-  return unique.slice(0, 12);
-  
-  const prompt = category === 'food' 
-    ? "Find 5 popular restaurants or cafes within a 3km radius of the provided location using Google Maps. Return a strict JSON array. Each object MUST include: 'id', 'name', 'description' (short), 'rating', 'address', 'category' ('restaurant'/'cafe'), 'tags', 'latitude' (number), 'longitude' (number). CRITICAL: If the map tool does not provide explicit latitude/longitude, you MUST estimate them based on the address. Do NOT return null for coordinates." 
-    : "Find 5 interesting tourist spots or landmarks within a 5km radius of the provided location using Google Maps. Return a strict JSON array. Each object MUST include: 'id', 'name', 'description', 'rating', 'address', 'category' ('attraction'), 'tags', 'latitude' (number), 'longitude' (number). CRITICAL: If the map tool does not provide explicit latitude/longitude, you MUST estimate them based on the address. Do NOT return null for coordinates.";
+  console.log("📍 변환된 Places:", places);
 
-  // Removed external call
+  // ⭐ 최대 카드 수 관리
+  return places.slice(0, 12);
 };
 
-export const fetchPlaceReviews = async (placeName: string, locationStr: string): Promise<ReviewSummary> => {
-  // Dependency removed: return a simple placeholder review
-  console.warn("fetchPlaceReviews: External AI dependency removed. Returning placeholder review.");
-  return {
-    summary: `Reviews unavailable for ${placeName}.`,
-    blogLinks: []
-  };
-  
-  const prompt = `Search for recent blog reviews and ratings for "${placeName}" near ${locationStr}. 
-  Focus on famous Korean platforms like Naver Blog, Daum, or Google Reviews.
-  
-  Output a JSON object:
-  {
-    "summary": "A 2-3 sentence summary of the general sentiment.",
-    "blogLinks": [
-      { "title": "Review Title", "url": "URL", "source": "Naver/Google" }
-    ]
-  }
-  `;
 
-  // Removed external call
-};
+//   const data = await res.json();
+//   const elements = Array.isArray(data.elements) ? data.elements : [];
+
+//   const places: Place[] = elements.map((el: any, idx: number) => {
+//     const lat = el.lat ?? el.center?.lat;
+//     const lon = el.lon ?? el.center?.lon;
+//     const name = el.tags?.name ?? el.tags?.['name:ko'] ?? el.tags?.['name:en'] ?? (category === 'food' ? 'Unknown Restaurant' : 'Unknown Spot');
+//     const categoryMapped = amenities.length ? (el.tags?.amenity ?? 'restaurant') : (el.tags?.tourism ?? 'attraction');
+//     const address = [el.tags?.addr_city, el.tags?.addr_district, el.tags?.addr_street, el.tags?.addr_housenumber].filter(Boolean).join(' ');
+
+//     return {
+//       id: `osm-${el.id}-${idx}`,
+//       name,
+//       description: el.tags?.description ?? (category === 'food' ? 'Local eatery or cafe.' : 'Tourist attraction nearby.'),
+//       rating: undefined,
+//       address,
+//       category: categoryMapped,
+//       tags: Object.keys(el.tags ?? {}),
+//       imageUrl: undefined,
+//       latitude: typeof lat === 'number' ? lat : parseFloat(lat),
+//       longitude: typeof lon === 'number' ? lon : parseFloat(lon),
+//     } as Place;
+//   }).filter(p => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+
+//   // Deduplicate by name + coords
+//   const seen = new Set<string>();
+//   const unique = places.filter(p => {
+//     const key = `${p.name}-${p.latitude.toFixed(5)}-${p.longitude.toFixed(5)}`;
+//     if (seen.has(key)) return false;
+//     seen.add(key);
+//     return true;
+//   });
+
+//   // Limit to 12 results
+//   return unique.slice(0, 12);
+  
+//   const prompt = category === 'food' 
+//     ? "Find 5 popular restaurants or cafes within a 3km radius of the provided location using Google Maps. Return a strict JSON array. Each object MUST include: 'id', 'name', 'description' (short), 'rating', 'address', 'category' ('restaurant'/'cafe'), 'tags', 'latitude' (number), 'longitude' (number). CRITICAL: If the map tool does not provide explicit latitude/longitude, you MUST estimate them based on the address. Do NOT return null for coordinates." 
+//     : "Find 5 interesting tourist spots or landmarks within a 5km radius of the provided location using Google Maps. Return a strict JSON array. Each object MUST include: 'id', 'name', 'description', 'rating', 'address', 'category' ('attraction'), 'tags', 'latitude' (number), 'longitude' (number). CRITICAL: If the map tool does not provide explicit latitude/longitude, you MUST estimate them based on the address. Do NOT return null for coordinates.";
+
+//   // Removed external call
+// };
+
+// export const fetchPlaceReviews = async (placeName: string, locationStr: string): Promise<ReviewSummary> => {
+//   // Dependency removed: return a simple placeholder review
+//   console.warn("fetchPlaceReviews: External AI dependency removed. Returning placeholder review.");
+//   return {
+//     summary: `Reviews unavailable for ${placeName}.`,
+//     blogLinks: []
+//   };
+  
+//   const prompt = `Search for recent blog reviews and ratings for "${placeName}" near ${locationStr}. 
+//   Focus on famous Korean platforms like Naver Blog, Daum, or Google Reviews.
+  
+//   Output a JSON object:
+//   {
+//     "summary": "A 2-3 sentence summary of the general sentiment.",
+//     "blogLinks": [
+//       { "title": "Review Title", "url": "URL", "source": "Naver/Google" }
+//     ]
+//   }
+//   `;
+
+//   // Removed external call
+// };

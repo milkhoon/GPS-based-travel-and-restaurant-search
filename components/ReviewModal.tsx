@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Place, ReviewSummary, Coordinates } from '../types';
-import { fetchPlaceReviews } from '../services/geminiService';
+// import { fetchPlaceReviews } from '../services/geminiService';
 import { X, Globe, MessageCircle, MapPin, Loader2, Star, ExternalLink } from 'lucide-react';
 
 interface ReviewModalProps {
@@ -20,12 +20,15 @@ const ReviewModal: React.FC<ReviewModalProps> = ({ place, userLocation, onClose 
       setLoading(true);
       try {
         // Create a rough location string for context
-        const locStr = `${userLocation.latitude},${userLocation.longitude}`;
-        const data = await fetchPlaceReviews(place.name, locStr);
-        if (isMounted) setReviews(data);
-      } catch (err) {
-        console.error(err);
-      } finally {
+        const fakeReview = {
+          summary: '리뷰 임시 패쇄',
+          blogLinks: []
+        };
+
+        if (isMounted) setLoading(false);
+      }catch (err) {
+        console.error('❌ fetchPlaceReviews ERROR:', err);
+      }finally{
         if (isMounted) setLoading(false);
       }
     };

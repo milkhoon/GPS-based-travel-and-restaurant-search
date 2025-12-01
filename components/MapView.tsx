@@ -27,7 +27,9 @@ export default function MapView({
 
   // 지도 초기화
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    // if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current) return;
+    if (mapRef.current) return;
 
     const map = L.map(containerRef.current);
     mapRef.current = map;
@@ -118,8 +120,8 @@ export default function MapView({
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0"
       style={{ width: '100%', height: '100%' }}
+      className="absolute inset-0"
     />
   );
 }
